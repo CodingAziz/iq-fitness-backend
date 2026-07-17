@@ -155,10 +155,10 @@ export const sendOtp = async (req, res) => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: "Your Amaztronics Verification Code",
+      subject: "Your IQ Fitness Verification Code",
       html: `
         <div style="max-width:500px;margin:auto;padding:24px;font-family:Arial,sans-serif;background:#ffffff;border:1px solid #e5e5e5;border-radius:8px;">
-          <h2 style="color:#1975E7;margin-top:0;">Amaztronics</h2>
+          <h2 style="color:#1975E7;margin-top:0;">IQ Fitness</h2>
 
           <p>Hello,</p>
 
@@ -287,7 +287,7 @@ export const verifyOtp = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.headers["refreshToken"];
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
@@ -303,7 +303,6 @@ export const logout = async (req, res) => {
         message: "Token not found",
       });
     }
-
     await RefreshSession.deleteOne({ _id: existingToken._id });
 
     return res.status(200).json({
@@ -321,7 +320,7 @@ export const logout = async (req, res) => {
 
 export const refresh = async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.headers["refreshToken"];
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
@@ -330,9 +329,7 @@ export const refresh = async (req, res) => {
     }
 
     const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_KEY);
-
     const userId = decoded.id;
-
     const user = await User.findById(userId);
     if (!user) {
       return res.status(401).json({ 
@@ -362,7 +359,6 @@ export const refresh = async (req, res) => {
 
     if (existingSession.tokenHash != hashedToken) {
       await RefreshSession.deleteOne({ _id: existingSession._id });
-
       return res.status(401).json({
         success: false,
         message: "Invalid Token",
