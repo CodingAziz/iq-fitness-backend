@@ -1,5 +1,5 @@
 import e from "express";
-import { login, signup, sendOtp, logout, refresh } from "../controllers/auth.controller";
+import { login, signup, sendOtp, verifyOtp, logout, refresh } from "../controllers/auth.controller";
 
 const router = e.router();
 
