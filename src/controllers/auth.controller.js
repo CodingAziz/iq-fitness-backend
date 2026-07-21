@@ -1,15 +1,15 @@
 
-import { RefreshSession } from '../models/refreshSessionModel.js';
-import { OTP } from '../models/otpModel.js';
-const { createSecretToken } = require("../util/secret-token");
+import { RefreshSession } from '../models/refreshSession.model.js';
+import { OTP } from '../models/otp.model.js';
+import { createSecretToken } from '../utils/token.utils.js';
 import jwt from 'jsonwebtoken'
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
-import { User } from '../models/userModel.js';
+import { User } from '../models/user.model.js';
 
 // OTP CONSTANTS
 const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 min
-const RESEND_COOLDOWN_MS = 1 * 60 * 1000; // 1 min
+const RESEND_COOLDOWN_MS = 30 * 1000; // 30 seconds
 const MAX_RESEND_ATTEMPTS = 5 // max resends
 const RESEND_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const MAX_VERIFY_ATTEMPTS = 5; // max attempts
@@ -119,7 +119,6 @@ export const sendOtp = async (req, res) => {
         existingOtp.verifyAttempts = 0;
         existingOtp.expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
         existingOtp.resendCounts += 1;
-        existingOtp.updatedAt = new Date();
 
         await existingOtp.save();
     } else {
@@ -127,8 +126,6 @@ export const sendOtp = async (req, res) => {
             email: email,
             otpHash: crypto.createHash("SHA256").update(otp).digest("hex"),
             expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
-            createdAt: new Date(),
-            updatedAt: new Date(),
         });
     }
 
@@ -194,15 +191,15 @@ export const sendOtp = async (req, res) => {
 
 export const verifyOtp = async (req, res) => {
   try {
-    const {fullName, phone, email, otp} = req.body;
-    if (!receivedOtp) {
+    const {fullName, phone, email, otp } = req.body;
+    if (!otp) {
       return res.status(404).json({
         success: false,
         message: "Email or OTP not found"
       });
     };
 
-    const existingOtp = await OTP.findOne({ otp: email });
+    const existingOtp = await OTP.findOne({ email: email });
     if (!existingOtp) {
       return res.status(404).json({
         success: false,
@@ -218,10 +215,10 @@ export const verifyOtp = async (req, res) => {
       });
     }
 
-    if (crypto.createHash("SHA256").update(receivedOtp).digest("hex") != existingOtp.otpHash) {
+    if (crypto.createHash("SHA256").update(otp).digest("hex") != existingOtp.otpHash) {
       existingOtp.verifyAttempts += 1
       if (existingOtp.verifyAttempts >= MAX_VERIFY_ATTEMPTS) {
-        await OTP.deleteOne({ email: email });
+        await OTP.deleteOne({ _id: existingOtp._id });
       } else {
         await existingOtp.save();
       }
@@ -240,33 +237,19 @@ export const verifyOtp = async (req, res) => {
         fullName: fullName,
         phone: phone,
         email: email,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       });
     } else {
       user = existingUser;
     }
 
-    const { accessToken, refreshToken } = createSecretToken(user._id);
-
-    const csrfToken = crypto.randomBytes(32).toString("hex");
-
-    const existingSession = await RefreshSession.findOne({ userId: user._id });
-    if (existingSession) {
-      existingSession.tokenHash = crypto.createHash("SHA256").update(refreshToken).digest("hex");
-      existingSession.expiresAt = new Date(Date.now() + THIRTY_DAYS_EXPIRY_MS);
-      existingSession.updatedAt = new Date();
-
-      await existingSession.save();
-    } else {
-      const sessionToken = await RefreshSession.create({
-        userId: user._id,
-        tokenHash: crypto.createHash("SHA256").update(refreshToken).digest("hex"),
-        expiresAt: new Date(Date.now() + THIRTY_DAYS_EXPIRY_MS),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-    }
+    const session = await RefreshSession.create({ 
+      userId: user._id,
+      expiresAt: new Date(Date.now() + THIRTY_DAYS_EXPIRY_MS),
+    });
+    const { accessToken, refreshToken } = createSecretToken(user._id, session._id);
+    const hashedToken = crypto.createHash("SHA256").update(refreshToken).digest("hex");
+    session.tokenHash = hashedToken;
+    await session.save();
 
     return res.status(201).send({
       success: true,
@@ -287,13 +270,15 @@ export const verifyOtp = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const refreshToken = req.headers["refreshToken"];
+    const refreshToken = req.headers["x-refresh-token"];
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
         message: "Token not found"
       });
     }
+
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_KEY)
 
     const hashedToken = crypto.createHash("SHA256").update(refreshToken).digest("hex");
     const existingToken = await RefreshSession.findOne({ tokenHash: hashedToken });
@@ -320,7 +305,7 @@ export const logout = async (req, res) => {
 
 export const refresh = async (req, res) => {
   try {
-    const refreshToken = req.headers["refreshToken"];
+    const refreshToken = req.headers["x-refresh-token"];
     if (!refreshToken) {
       return res.status(401).json({
         success: false,
@@ -329,7 +314,17 @@ export const refresh = async (req, res) => {
     }
 
     const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_KEY);
-    const userId = decoded.id;
+    const userId = decoded.userId;
+    const sessionId = decoded.sessionId;
+
+    const existingSession = await RefreshSession.findById(sessionId);
+    if (!existingSession) {
+      return res.status(401).json({
+        success: false,
+        message: "Session does not exist"
+      })
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(401).json({ 
@@ -338,15 +333,8 @@ export const refresh = async (req, res) => {
       });
     }
 
-    const existingSession = await RefreshSession.findOne({ userId: userId });
-    if (!existingSession) {
-      return res.status(401).json({
-        success: false,
-        message: "Session does not exist"
-      })
-    }
 
-    if (new Date(Date.now()) > existingSession.expiresAt) {
+    if (Date.now() > existingSession.expiresAt) {
       await RefreshSession.deleteOne({ _id: existingSession._id });
 
       return res.status(401).json({
@@ -357,20 +345,18 @@ export const refresh = async (req, res) => {
 
     const hashedToken = crypto.createHash("SHA256").update(refreshToken).digest("hex");
 
-    if (existingSession.tokenHash != hashedToken) {
+    if (existingSession.tokenHash !== hashedToken) {
       await RefreshSession.deleteOne({ _id: existingSession._id });
       return res.status(401).json({
         success: false,
         message: "Invalid Token",
       });
     }
-    const { accessToken, refreshToken: newRefreshToken } = createSecretToken(userId);
 
-    const csrfToken = crypto.randomBytes(32).toString("hex");
+    const { accessToken, refreshToken: newRefreshToken } = createSecretToken(userId, existingSession._id);
 
     existingSession.tokenHash = crypto.createHash("SHA256").update(newRefreshToken).digest("hex");
     existingSession.expiresAt = new Date(Date.now() + THIRTY_DAYS_EXPIRY_MS);
-    existingSession.updatedAt = new Date();
 
     await existingSession.save();
 

@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { User } from "../models/userModel.js";
+import { User } from "../models/user.model.js";
 
 export const requireSignIn = async (req, res, next) => {
   try {
@@ -13,7 +13,7 @@ export const requireSignIn = async (req, res, next) => {
 
     const accessToken = authHeader.split(" ")[1];
     const decoded = jwt.verify(accessToken, process.env.TOKEN_KEY);
-    const user = await User.findOne({ _id: decoded.id });
+    const user = await User.findOne({ _id: decoded.userId });
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -21,9 +21,7 @@ export const requireSignIn = async (req, res, next) => {
       });
     }
 
-    req.user = {
-      id: user._id,
-    };
+    req.userId = user._id
 
     next();
   } catch(error) {
