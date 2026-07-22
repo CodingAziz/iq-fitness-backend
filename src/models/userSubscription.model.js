@@ -6,7 +6,7 @@ const userSubscriptionSchema = mongoose.Schema({
   },
   plan: {
     type: String,
-    enum: ["Free", "Diet", "Premium", "Pro"],
+    enum: ["Free", "Premium", "Pro"],
   },
   status: {
     type: String,
