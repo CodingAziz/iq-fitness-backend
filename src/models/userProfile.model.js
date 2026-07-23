@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 const userProfileSchema = mongoose.Schema({
   userId: {
     type: mongoose.Types.ObjectId,
+    ref: "User",
+    required: true,
+    index: true,
   },
   gender: {
     type: String,
